@@ -54,5 +54,33 @@ def aggregate_neighbour_node_feature(adjacency_matrix, features):
     return aggregate_features
 
 
+def filter_edge_pairs(edge_pairs, include_type, node_type_map, return_df=False):
+    """
+    :param edge_pairs: edge pairs array
+    :param include_type: type of node to include
+    :param node_type_map: pandas df with node_ids and entity_types column.
+        node_ids is an id of a node which the same set of ids as used in edge pairs.
+        entity_types is a type of a given node.
+    :param return_df: a boolean indicating whether to return results as pandas df (if True) or as array
+    :return: an array of filtered edge pairs
+    """
+    edge_df = pd.DataFrame(edge_pairs, columns=['source', 'destination'])
 
+    edge_df = edge_df.merge(
+        node_type_map[['node_ids', 'entity_types']], how='left', left_on='source', right_on='node_ids'
+    )
+    edge_df.columns = ['source', 'destination', 'source_id', 'source_type']
+    edge_df = edge_df.merge(
+        node_type_map[['node_ids', 'entity_types']], how='left', left_on='destination', right_on='node_ids'
+    )
+    edge_df.columns = ['source', 'destination', 'source_id', 'source_type', 'destination_id', 'destination_type']
+    edge_df = edge_df[['source', 'destination', 'source_type', 'destination_type']]
+
+    filter_bool = (edge_df['source_type'].isin(include_type) & edge_df['destination_type'].isin(include_type))
+    output = edge_df[filter_bool][['source', 'destination']]
+
+    if not return_df:
+        output = output[['source', 'destination']].values
+
+    return output
 
