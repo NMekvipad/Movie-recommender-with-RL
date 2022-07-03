@@ -1,5 +1,6 @@
 import torch
 import torch.nn.functional as F
+import numpy as np
 from collections import defaultdict
 from torch_geometric.utils import softmax
 from src.model.layers import MultiHeadEdgeAttention
@@ -50,10 +51,10 @@ class IntraMetaPathAggregator(torch.nn.Module):
         # (n_edge, num_head * feat_dim)
         metapath_node_feat = self.attention(x=node_features, edge_index=edge_index, edge_attr=agg_feat)
 
-        return metapath_node_feat.view(-1, self.num_head, self.in_features)
+        return metapath_node_feat
 
 
-class MetaPathAggregator(torch.nn.Module):
+class InterMetaPathAggregator(torch.nn.Module):
     def __init__(
             self, hidden_size, metapath_map, num_head=1, interpath_aggregator='mean',
             intrapath_aggregator='mean', activation=None
@@ -76,7 +77,14 @@ class MetaPathAggregator(torch.nn.Module):
         self.hidden_size = hidden_size
         self.num_head = num_head
         self.activation_type = activation
+
+        # layers
         self.intra_metapath_aggregator = defaultdict(dict)
+        self.path_summarizer = defaultdict(dict)
+        self.path_attn = defaultdict(dict)
+        self.output_linear = dict()
+        self.output_activation = torch.nn.ReLU()
+        self.tanh = torch.nn.Tanh()
 
         for node_type, metapaths in self.metapath_map.items():
             for metapath in metapaths:
@@ -87,6 +95,17 @@ class MetaPathAggregator(torch.nn.Module):
                     activation=self.activation_type
                 )
 
+                self.path_summarizer[node_type][metapath] = torch.nn.Linear(
+                    in_features=self.hidden_size * self.num_head, out_features=self.hidden_size, bias=True
+                )
+
+                self.path_attn[node_type][metapath] = torch.nn.Linear(
+                    in_features=self.hidden_size, out_features=1, bias=False
+                )
+
+            self.output_linear[node_type] = torch.nn.Linear(
+                    in_features=self.hidden_size * self.num_head, out_features=self.hidden_size, bias=True
+            )
 
     def forward(self, node_features, meta_graphs_by_n_type):
         """
@@ -101,10 +120,11 @@ class MetaPathAggregator(torch.nn.Module):
             }
         :node_features: Tensor of shape (no. of node, node feature dimension)
         """
-
+        outputs = dict()
         for node_type, graph_data in meta_graphs_by_n_type.items():
             metapath_dict, node_type_mask = graph_data
-            intra_path_agg_message = list()
+            intra_path_agg_node = list()
+            e_p = list()
 
             # intra-metapath message passing
             for metapath, metapath_data in metapath_dict.items():
@@ -114,15 +134,20 @@ class MetaPathAggregator(torch.nn.Module):
                     metapath_idx=metapath_data[1]
                 )
 
-                intra_path_agg_message.append(metapath_node_feat)
+                h_p = metapath_node_feat[np.where(node_type_mask == node_type)]
+                s_p = self.tanh(self.path_summarizer[node_type][metapath](h_p)).mean(dim=0)
 
+                intra_path_agg_node.append(h_p.unsqueeze(dim=1))
+                e_p.append(self.path_attn[node_type][metapath](s_p))
 
+            # inter_metapath_aggregation
+            beta = F.softmax(torch.concat(e_p, dim=0), dim=0).unsqueeze(dim=-1)
+            h_p = torch.concat(intra_path_agg_node, dim=1)
+            h_p_a = (h_p * beta).sum(dim=1)
+            h_v = self.output_activation(self.output_linear[node_type])
+            outputs[node_type] = h_v
 
-
-
-
-
-
+        return outputs
 
 
 class MAGNN(torch.nn.Module):

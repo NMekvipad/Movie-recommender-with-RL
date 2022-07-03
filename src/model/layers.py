@@ -24,7 +24,7 @@ class MultiHeadEdgeAttention(MessagePassing):
         self.in_features = in_features
 
         # weighted attention take aggregation output concat with node as input
-        self.target_attn = torch.nn.Linear(in_features=self.in_features, out_features=self.num_head)
+        self.target_attn = torch.nn.Linear(in_features=self.in_features, out_features=self.num_head, bias=False)
         self.metapath_attn = torch.nn.Parameter(torch.empty(size=(self.num_head, self.in_features)))
         self.leaky_relu = LeakyReLU()
 
