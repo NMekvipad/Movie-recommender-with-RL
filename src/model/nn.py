@@ -2,7 +2,6 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 from collections import defaultdict
-from torch_geometric.utils import softmax
 from src.model.layers import MultiHeadEdgeAttention
 
 
@@ -56,7 +55,7 @@ class IntraMetaPathAggregator(torch.nn.Module):
 
 class InterMetaPathAggregator(torch.nn.Module):
     def __init__(
-            self, hidden_size, metapath_map, num_head=1, interpath_aggregator='mean',
+            self, hidden_size, metapath_map, num_head=1,
             intrapath_aggregator='mean', activation=None
     ):
         """
@@ -71,7 +70,6 @@ class InterMetaPathAggregator(torch.nn.Module):
         super().__init__()
 
         # model hyperparameters
-        self.interpath_aggregator = interpath_aggregator
         self.intrapath_aggregator = intrapath_aggregator
         self.metapath_map = metapath_map
         self.hidden_size = hidden_size
@@ -144,7 +142,7 @@ class InterMetaPathAggregator(torch.nn.Module):
             beta = F.softmax(torch.concat(e_p, dim=0), dim=0).unsqueeze(dim=-1)
             h_p = torch.concat(intra_path_agg_node, dim=1)
             h_p_a = (h_p * beta).sum(dim=1)
-            h_v = self.output_activation(self.output_linear[node_type])
+            h_v = self.output_activation(self.output_linear[node_type](h_p_a))
             outputs[node_type] = h_v
 
         return outputs
@@ -164,8 +162,6 @@ class MAGNN(torch.nn.Module):
         # intra metapath aggregation
 
         # inter metapath aggregation
-
-        # message passing
 
         # update node feature
 
