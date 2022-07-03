@@ -1,11 +1,24 @@
 import torch
+from torch.nn import LeakyReLU, ReLU
 from torch_geometric.utils import softmax
 from torch_geometric.nn import MessagePassing
 
 
+# placeholder activation function
+class NoActivation(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        """
+        Placeholder activation function
+        """
+        return x
+
+
 # message passing for edge aggregation https://github.com/pyg-team/pytorch_geometric/issues/1489
 class MultiHeadEdgeAttention(MessagePassing):
-    def __init__(self, num_head, in_features):
+    def __init__(self, num_head, in_features, activation=None):
         super(MultiHeadEdgeAttention, self).__init__(aggr='add')  # "Add" aggregation.
         self.num_head = num_head
         self.in_features = in_features
@@ -13,6 +26,14 @@ class MultiHeadEdgeAttention(MessagePassing):
         # weighted attention take aggregation output concat with node as input
         self.target_attn = torch.nn.Linear(in_features=self.in_features, out_features=self.num_head)
         self.metapath_attn = torch.nn.Parameter(torch.empty(size=(self.num_head, self.in_features)))
+        self.leaky_relu = LeakyReLU()
+
+        if activation is None:
+            self.activation = NoActivation
+        if activation == 'relu':
+            self.activation = ReLU
+        else:
+            raise ValueError("Undefined activation function")
 
         # init weight
         torch.nn.init.xavier_normal_(self.target_attn.weight)
@@ -37,14 +58,14 @@ class MultiHeadEdgeAttention(MessagePassing):
         metapath_attention = metapath_attention.sum(dim=-1)  # (n_edge, num_head)
 
         # calculate attention weight
-        e_p = target_attention + metapath_attention
+        e_p = self.leaky_relu(target_attention + metapath_attention)
         # (n_edge, softmax(num_head)); softmax is applied along axis 1 for each col
         attn = softmax(e_p, edge_index.permute(1, 0)[:, -1])
-        attn_weighted_feat = edge_attr * attn.unsqueeze(dim=-1)   # (n_edge, num_head, feat_dim) * (n_edge, num_head, 1)
+        # (n_edge, num_head, feat_dim) * (n_edge, num_head, 1)
+        attn_weighted_feat = self.activation(edge_attr * attn.unsqueeze(dim=-1))
 
         return attn_weighted_feat.view(-1, self.num_head * self.in_features)  # (n_edge, num_head * feat_dim)
 
     def update(self, aggr_out):
-        # aggr_out has shape [N, out_channels]
-        # Step 5: Return new node embeddings.
         return aggr_out
+

@@ -1,12 +1,13 @@
 import torch
 import torch.nn.functional as F
+from collections import defaultdict
 from torch_geometric.utils import softmax
 from src.model.layers import MultiHeadEdgeAttention
 
 
 #TODO: currentlt written for single head case, need to expand to multi-head
-class IntraMetaPathAggregation(torch.nn.Module):
-    def __init__(self, hidden_size, num_head=1, aggregator_type='mean'):
+class IntraMetaPathAggregator(torch.nn.Module):
+    def __init__(self, hidden_size, num_head=1, aggregator_type='mean', activation=None):
         super().__init__()
 
         # model hyperparameters
@@ -24,7 +25,7 @@ class IntraMetaPathAggregation(torch.nn.Module):
         else:
             raise ValueError("aggregator_type can only be values in ['GRU', 'mean']")
 
-        self.attention = MultiHeadEdgeAttention(num_head=num_head, in_features=hidden_size)
+        self.attention = MultiHeadEdgeAttention(num_head=num_head, in_features=hidden_size, activation=activation)
 
     def forward(self, node_features, edge_index, metapath_idx):
         #TODO:  Node feature and edge pairs to be encompassed in PyG graph class.
@@ -47,17 +48,81 @@ class IntraMetaPathAggregation(torch.nn.Module):
 
         # edge attention
         # (n_edge, num_head * feat_dim)
-        updated_node_feat = self.attention(x=node_features, edge_index=edge_index, edge_attr=agg_feat)
+        metapath_node_feat = self.attention(x=node_features, edge_index=edge_index, edge_attr=agg_feat)
 
-        return updated_node_feat
+        return metapath_node_feat.view(-1, self.num_head, self.in_features)
 
 
-class InterMetaPathAggregation(torch.nn.Module):
-    def __init__(self, hidden_dim):
+class MetaPathAggregator(torch.nn.Module):
+    def __init__(
+            self, hidden_size, metapath_map, num_head=1, interpath_aggregator='mean',
+            intrapath_aggregator='mean', activation=None
+    ):
+        """
+        :metapath_list: list metapath by node type
+            {
+                # for each node type
+                'node_type': [(metapath 1, metapath 2)],
+                # metapath 1 is a tuple of node type mask for each metapath nodes e.g. ('M', 'S', 'M')
+            }
+
+        """
         super().__init__()
 
-    def forward(self):
-        pass
+        # model hyperparameters
+        self.interpath_aggregator = interpath_aggregator
+        self.intrapath_aggregator = intrapath_aggregator
+        self.metapath_map = metapath_map
+        self.hidden_size = hidden_size
+        self.num_head = num_head
+        self.activation_type = activation
+        self.intra_metapath_aggregator = defaultdict(dict)
+
+        for node_type, metapaths in self.metapath_map.items():
+            for metapath in metapaths:
+                self.intra_metapath_aggregator[node_type][metapath] = IntraMetaPathAggregator(
+                    hidden_size=self.hidden_size,
+                    num_head=self.num_head,
+                    aggregator_type=self.activation_type,
+                    activation=self.activation_type
+                )
+
+
+    def forward(self, node_features, meta_graphs_by_n_type):
+        """
+        :meta_graphs_by_n_type: list of tuples where each tuple contains information about metapath graphs for each node type
+        These information are edge indices, metapath indices and node type mask
+            {
+                # for each node type
+                'node_type': ({
+                    (metapath 1): (edge_idx_metapath_1, metapath_idx_1),
+                    (metapath 2): (edge_idx_metapath_2, metapath_idx_2)
+                }, node_type_mask)
+            }
+        :node_features: Tensor of shape (no. of node, node feature dimension)
+        """
+
+        for node_type, graph_data in meta_graphs_by_n_type.items():
+            metapath_dict, node_type_mask = graph_data
+            intra_path_agg_message = list()
+
+            # intra-metapath message passing
+            for metapath, metapath_data in metapath_dict.items():
+                metapath_node_feat = self.intra_metapath_aggregator[node_type][metapath](
+                    node_features=node_features,
+                    edge_index=metapath_data[0],
+                    metapath_idx=metapath_data[1]
+                )
+
+                intra_path_agg_message.append(metapath_node_feat)
+
+
+
+
+
+
+
+
 
 
 class MAGNN(torch.nn.Module):
