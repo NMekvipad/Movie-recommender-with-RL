@@ -8,10 +8,11 @@ from src.data.movie_data_processing import (
     movielens_genre_map, load_movielens_movie_list
 )
 from src.utils.graph_utils import (
-    extract_source_idx_list, edge_pairs_to_sparse_adjacency, aggregate_neighbour_node_feature
+    extract_source_idx_list, edge_pairs_to_sparse_adjacency, aggregate_neighbour_node_feature, extract_symmetric_metapath
 )
 from src.utils.utils import join_string
 from sklearn.feature_extraction.text import CountVectorizer
+from src.utils.utils import RunTimer
 
 
 # Separate data processing into separate function that can be run in stepwise manner via Airflow or other scheduler
@@ -324,7 +325,33 @@ def generate_genre_tag_movie_embedding():
     np.save(output_path, node_embeddings)
 
 
-def generate_meta_path_graph():
-    pass
+def generate_metapath_graph():
+
+    graph_data_path = os.path.join('dataset', 'graph_input.pickle')
+
+    with open(graph_data_path, 'rb') as f:
+        graph_data = pickle.load(f)
+
+    node_type_map = graph_data['node_entity_type_map']
+    edge_data = graph_data['edge_data']
+    edge_pairs = edge_data[['source', 'destination']].values
+
+    timer = RunTimer()
+    timer.get_time_elaspe('Start run')
+    metapath = ('M', 'S', 'M')
+    metapath_instances = extract_symmetric_metapath(metapath, edge_pairs, node_type_map)
+    timer.get_time_elaspe('Finish metapath extraction')
+
+
+
+
+
+
+
+
+
+
+
+
 
 
