@@ -3,16 +3,20 @@ import pandas as pd
 import torch
 import pickle
 import numpy as np
+from collections import defaultdict
 from sentence_transformers import SentenceTransformer
 from src.data.movie_data_processing import (
     movielens_genre_map, load_movielens_movie_list
 )
 from src.utils.graph_utils import (
-    extract_source_idx_list, edge_pairs_to_sparse_adjacency, aggregate_neighbour_node_feature, extract_symmetric_metapath
+    extract_source_idx_list, edge_pairs_to_sparse_adjacency, aggregate_neighbour_node_feature, extract_metapath
 )
 from src.utils.utils import join_string
 from sklearn.feature_extraction.text import CountVectorizer
 from src.utils.utils import RunTimer
+
+
+included_staff_type = ['Acting', 'Directing', 'Writing', 'Production']
 
 
 # Separate data processing into separate function that can be run in stepwise manner via Airflow or other scheduler
@@ -50,11 +54,6 @@ def extract_node_and_edge(data_path='dataset'):
     genre_map = {genre: idx for idx, genre in enumerate(genre_df['genre'].unique())}
     genre_df = genre_df.assign(genre_id=genre_df['genre'].map(genre_map))  # (movie, genre) edge
 
-    num_genre = len(list(genre_map.keys()))
-    entity_ids.extend(range(num_genre))
-    node_ids.extend(list(range(len(node_ids), len(node_ids) + num_genre)))
-    entity_types.extend(['G'] * num_genre)
-
     ##################################################
     #                 movie tag nodes                #
     ##################################################
@@ -76,11 +75,6 @@ def extract_node_and_edge(data_path='dataset'):
         movie_df[['movieId', 'tmdbId']].drop_duplicates(), how='inner', on='movieId'
     )  # (movie, tag) edge
 
-    tag_ids = list(genome_score_df['tagId'].unique())
-    entity_ids.extend(tag_ids)
-    node_ids.extend(list(range(len(node_ids), len(node_ids) + len(tag_ids))))
-    entity_types.extend(['T'] * len(tag_ids))
-
     ##################################################
     #                   staff nodes                  #
     ##################################################
@@ -89,10 +83,18 @@ def extract_node_and_edge(data_path='dataset'):
         staff_data = pickle.load(f)
 
     staff_data = pd.concat(staff_data)  # (movie, staff) edge
-    staff_ids = list(staff_data['id'].unique())
-    entity_ids.extend(staff_ids)
-    node_ids.extend(list(range(len(node_ids), len(node_ids) + len(staff_ids))))
-    entity_types.extend(['S'] * len(staff_ids))
+    staff_data = staff_data[staff_data['known_for_department'].isin(included_staff_type)]
+
+    # Acting staff
+    actor_ids = list(staff_data[staff_data['known_for_department'] == 'Acting']['id'].unique())
+
+    # Production staff
+    production_staff_ids = list(staff_data[staff_data['known_for_department'] != 'Acting']['id'].unique())
+
+    entity_ids.extend(actor_ids + production_staff_ids)
+    node_ids.extend(list(range(len(node_ids), len(node_ids) + len(actor_ids + production_staff_ids))))
+    entity_types.extend(['A'] * len(actor_ids))
+    entity_types.extend(['S'] * len(production_staff_ids))
 
     if len(entity_ids) != len(node_ids) or len(entity_ids) != len(entity_types):
         raise ValueError('Unequal data shape')
@@ -104,31 +106,28 @@ def extract_node_and_edge(data_path='dataset'):
     node_entity_map = pd.DataFrame({'entity_ids': entity_ids, 'node_ids': node_ids, 'entity_types': entity_types})
 
     entity_map = dict()
-    entities = {'M': 'movie_node', 'G': 'genre_node', 'T': 'tag_node', 'S': 'staff_node'}
+    entities = {'M': 'movie_node', 'A': 'actor_node', 'S': 'staff_node'}
     for entity_cd, entity_type in entities.items():
         df = node_entity_map[node_entity_map['entity_types'] == entity_cd][['entity_ids', 'node_ids']]
         df.columns = ['entity_ids', entity_type]
         entity_map[entity_cd] = df
 
-    # ('movie', 'member of', 'genre')
     genre_df = genre_df.merge(entity_map['M'], how='left', left_on='tmdbId', right_on='entity_ids')
-    genre_df = genre_df.merge(entity_map['G'], how='left', left_on='genre_id', right_on='entity_ids')
-    genre_movie_edges = genre_df[['movie_node', 'genre_node']]
-    genre_movie_edges = genre_movie_edges.assign(edge_type=[('M', 'member_of', 'G')] * genre_movie_edges.shape[0])
-
-    # ('movie', 'member of', 'tag')
     genome_score_df = genome_score_df.merge(entity_map['M'], how='left', left_on='tmdbId', right_on='entity_ids')
-    genome_score_df = genome_score_df.merge(entity_map['T'], how='left', left_on='tagId', right_on='entity_ids')
-    tag_movie_edges = genome_score_df[['movie_node', 'tag_node']]
-    tag_movie_edges = tag_movie_edges.assign(edge_type=[('M', 'member_of', 'T')] * tag_movie_edges.shape[0])
 
     # ('movie', 'has staff', 'staff')
-    staff_data = staff_data.merge(entity_map['M'], how='left', left_on='movie_id', right_on='entity_ids')
-    staff_data = staff_data.merge(entity_map['S'], how='left', left_on='id', right_on='entity_ids')
-    staff_movie_edges = staff_data[['movie_node', 'staff_node']]
+    production_staff = staff_data.merge(entity_map['M'], how='inner', left_on='movie_id', right_on='entity_ids')
+    production_staff = production_staff.merge(entity_map['S'], how='inner', left_on='id', right_on='entity_ids')
+    staff_movie_edges = production_staff[['movie_node', 'staff_node']]
     staff_movie_edges = staff_movie_edges.assign(edge_type=[('M', 'has_staff', 'S')] * staff_movie_edges.shape[0])
 
-    edge_dfs = [genre_movie_edges, tag_movie_edges, staff_movie_edges]
+    # ('movie', 'has actor', 'actor')
+    acting_staff = staff_data.merge(entity_map['M'], how='inner', left_on='movie_id', right_on='entity_ids')
+    acting_staff = acting_staff.merge(entity_map['A'], how='inner', left_on='id', right_on='entity_ids')
+    actor_movie_edges = acting_staff[['movie_node', 'actor_node']]
+    actor_movie_edges = actor_movie_edges.assign(edge_type=[('M', 'has_actor', 'A')] * actor_movie_edges.shape[0])
+
+    edge_dfs = [actor_movie_edges, staff_movie_edges]
     for df in edge_dfs:
         df.columns = ['source', 'destination', 'edge_type']
 
@@ -172,7 +171,6 @@ def generate_movie_sbert_embedding():
     # load movie id to node id map
     node_entity_type_map = graph_data['node_entity_type_map']
     node_entity_type_map = node_entity_type_map[node_entity_type_map['entity_types'] == 'M']
-
 
     ##################################################
     #                Generate embedding              #
@@ -261,7 +259,7 @@ def propagate_sbert_movie_embedding():
         size=(node_type_map[node_type_map['entity_types'] != 'M'].shape[0], embedding.shape[-1])
     ).numpy()
 
-    sbert_rand_embedding = node_embeddings = np.concatenate([embedding, rand_features])
+    sbert_rand_embedding = np.concatenate([embedding, rand_features])
     np.save(sbert_rand_output_path, sbert_rand_embedding)
 
 
@@ -312,13 +310,13 @@ def generate_genre_tag_movie_embedding():
     adjacency_matrix = edge_pairs_to_sparse_adjacency(edge_pairs, adj_dim)
 
     ##################################################
-    #            propagate sbert embedding           #
+    #          propagate genre-tag embedding         #
     ##################################################
     # filter adjacency for (genre + tag +staff, movie)
     non_movie_start_idx = node_type_map[node_type_map['entity_types'] == 'M']['node_ids'].max() + 1
     adjacency_matrix_filtered = adjacency_matrix[non_movie_start_idx:, :non_movie_start_idx]
 
-    # propagate sbert embedding
+    # propagate genre-tag embedding
     non_movie_embedding = aggregate_neighbour_node_feature(adjacency_matrix_filtered, movie_features)
 
     node_embeddings = np.concatenate([movie_features, non_movie_embedding])
@@ -328,6 +326,7 @@ def generate_genre_tag_movie_embedding():
 def generate_metapath_graph():
 
     graph_data_path = os.path.join('dataset', 'graph_input.pickle')
+    output_path = os.path.join('dataset', 'metapath_graph.pickle')
 
     with open(graph_data_path, 'rb') as f:
         graph_data = pickle.load(f)
@@ -336,13 +335,32 @@ def generate_metapath_graph():
     edge_data = graph_data['edge_data']
     edge_pairs = edge_data[['source', 'destination']].values
 
+    node_type_specific_metapath = {
+        'A': [('A', 'M', 'A'), ('A', 'M', 'S', 'M', 'A')],
+        'S': [('S', 'M', 'S'), ('S', 'M', 'A', 'M', 'S')],
+        'M': [('M', 'A', 'M'), ('M', 'S', 'M')],
+    }
+
     timer = RunTimer()
     timer.get_time_elaspe('Start run')
-    metapath = ('M', 'S', 'M')
-    metapath_instances = extract_symmetric_metapath(metapath, edge_pairs, node_type_map)
-    timer.get_time_elaspe('Finish metapath extraction')
+    output = defaultdict(dict)
+
+    for node, metapaths in node_type_specific_metapath.items():
+        for metapath in metapaths:
+            timer.get_time_elaspe('Extract {metap}'.format(metap='-'.join(metapath)))
+            metapath_instances = extract_metapath(metapath, edge_pairs, node_type_map)
+            timer.get_time_elaspe('Finish {metap} extraction'.format(metap='-'.join(metapath)))
+            output[node][metapath] = metapath_instances
+
+    with open(output_path, 'wb') as f:
+        pickle.dump(output, f)
 
 
+if __name__ == '__main__':
+    #extract_node_and_edge()
+    #generate_movie_sbert_embedding()
+    #propagate_sbert_movie_embedding()
+    generate_metapath_graph()
 
 
 

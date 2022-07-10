@@ -159,13 +159,13 @@ def extract_metapath(metapath, edge_pairs, node_type_map):
     for source in source_nodes:
         for destination in destination_nodes:
 
-            print(source, destination)
+            # print(source, destination)
             paths = [
                 p for p in nx.all_simple_paths(
                     g, source=source, target=destination, cutoff=(len(metapath) - 1) // 2
                 ) if len(p) == ((len(metapath) - 1) // 2)
             ]
-            print(paths)
+            # print(paths)
 
             if len(paths) > 0:
                 return None
