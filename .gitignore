@@ -1,6 +1,6 @@
 /sandbox
 /.idea
-/__pycache__
+/**/__pycache__/
 /dataset/MovieLens20M
 /dataset/__pycache__
 /dataset/*.npy

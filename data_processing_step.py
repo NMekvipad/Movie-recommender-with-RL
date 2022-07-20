@@ -3,6 +3,8 @@ import pandas as pd
 import torch
 import pickle
 import numpy as np
+import tqdm
+from multiprocessing import Pool
 from collections import defaultdict
 from sentence_transformers import SentenceTransformer
 from src.data.movie_data_processing import (
@@ -14,7 +16,6 @@ from src.utils.graph_utils import (
 from src.utils.utils import join_string
 from sklearn.feature_extraction.text import CountVectorizer
 from src.utils.utils import RunTimer
-
 
 included_staff_type = ['Acting', 'Directing', 'Writing', 'Production']
 
@@ -323,7 +324,14 @@ def generate_genre_tag_movie_embedding():
     np.save(output_path, node_embeddings)
 
 
-def generate_metapath_graph():
+def extract_metapath_wrapper(x):
+    node, metapath, edge_pairs, node_type_map = x
+    metapath_instances = extract_metapath(metapath, edge_pairs, node_type_map)
+
+    return node, metapath, metapath_instances
+
+
+def generate_metapath_graph(processes=4):
 
     graph_data_path = os.path.join('dataset', 'graph_input.pickle')
     output_path = os.path.join('dataset', 'metapath_graph.pickle')
@@ -344,13 +352,18 @@ def generate_metapath_graph():
     timer = RunTimer()
     timer.get_time_elaspe('Start run')
     output = defaultdict(dict)
+    metapaths_tuples = list()
 
     for node, metapaths in node_type_specific_metapath.items():
         for metapath in metapaths:
-            timer.get_time_elaspe('Extract {metap}'.format(metap='-'.join(metapath)))
-            metapath_instances = extract_metapath(metapath, edge_pairs, node_type_map)
-            timer.get_time_elaspe('Finish {metap} extraction'.format(metap='-'.join(metapath)))
-            output[node][metapath] = metapath_instances
+            metapaths_tuples.append((node, metapath, edge_pairs, node_type_map))
+
+    with Pool(processes) as p:
+        results = list(tqdm.tqdm(p.imap(extract_metapath_wrapper, metapaths_tuples), total=len(metapaths_tuples)))
+    timer.get_time_elaspe('Finish metapath extraction')
+
+    for metapath_item in results:
+        output[metapath_item[0]][metapath_item[1]] = metapath_item[2]
 
     with open(output_path, 'wb') as f:
         pickle.dump(output, f)
