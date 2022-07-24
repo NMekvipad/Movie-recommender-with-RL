@@ -29,9 +29,9 @@ class MultiHeadEdgeAttention(MessagePassing):
         self.leaky_relu = LeakyReLU()
 
         if activation is None:
-            self.activation = NoActivation
-        if activation == 'relu':
-            self.activation = ReLU
+            self.activation = NoActivation()
+        elif activation == 'relu':
+            self.activation = ReLU()
         else:
             raise ValueError("Undefined activation function")
 
