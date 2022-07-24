@@ -163,12 +163,8 @@ def extract_metapath(metapath, edge_pairs, node_type_map):
             paths = [
                 p for p in nx.all_simple_paths(
                     g, source=source, target=destination, cutoff=(len(metapath) - 1) // 2
-                ) if len(p) == ((len(metapath) - 1) // 2)
+                ) if len(p) == ((len(metapath) - 1) // 2) + 1
             ]
-            # print(paths)
-
-            if len(paths) > 0:
-                return None
 
             metapath_instances[destination].extend(paths)
 
@@ -176,6 +172,18 @@ def extract_metapath(metapath, edge_pairs, node_type_map):
     for key, value in metapath_instances.items():
         for path_left in value:
             for path_right in value:
-                metapath_neighbor_paris[(path_left[0], path_right[0])].extend([path_left + path_right[-2::-1]])
+                if path_left != path_right:
+                    metapath_neighbor_paris[(path_left[0], path_right[0])].extend([path_left + path_right[-2::-1]])
 
-    return metapath_neighbor_paris
+    edge_index_updated = list()
+    metapath_indices = list()
+
+    for key, values in metapath_neighbor_paris.items():
+        for path in values:
+            edge_index_updated.append(key)
+            metapath_indices.append(path)
+
+    return edge_index_updated, metapath_indices
+
+
+#TODO: Add function to convert graph to bi-directional graph
