@@ -30,7 +30,7 @@ def extract_node_and_edge(data_path='dataset'):
     movielens_genome_score_path = os.path.join(movielens_path, 'genome_scores.csv')
     movielens_genome_tag_path = os.path.join(movielens_path, 'genome_tags.csv')
     tmdb_staff_data_path = os.path.join(data_path, 'staff_data.pickle')
-    output_path = os.path.join(data_path, 'graph_input.pickle')
+    output_path = os.path.join(data_path, 'dataset/graph_input.pickle')
 
     ##################################################
     #                   movie nodes                  #
@@ -161,7 +161,7 @@ def generate_movie_sbert_embedding():
 
     movie_data_path = os.path.join('dataset', 'movie_data.json')
     output_path = os.path.join('dataset', 'movie_node_embedding.pickle')
-    graph_data_path = os.path.join('dataset', 'graph_input.pickle')
+    graph_data_path = os.path.join('dataset', 'dataset/graph_input.pickle')
 
     if torch.cuda.is_available():
         print('CUDA available')
@@ -213,7 +213,7 @@ def generate_movie_sbert_embedding():
 
 
 def propagate_sbert_movie_embedding():
-    graph_data_path = os.path.join('dataset', 'graph_input.pickle')
+    graph_data_path = os.path.join('dataset', 'dataset/graph_input.pickle')
     embedding_path = os.path.join('dataset', 'movie_node_embedding.pickle')
     sbert_output_path = os.path.join('dataset', 'sbert_node_embedding.npy')
     sbert_rand_output_path = os.path.join('dataset', 'sbert_rand_node_embedding.npy')
@@ -269,7 +269,7 @@ def generate_genre_tag_movie_embedding():
     Similar style of embedding to MAGNN paper
     """
 
-    graph_data_path = os.path.join('dataset', 'graph_input.pickle')
+    graph_data_path = os.path.join('dataset', 'dataset/graph_input.pickle')
     output_path = os.path.join('dataset', 'genre_tag_features.npy')
 
     with open(graph_data_path, 'rb') as f:
