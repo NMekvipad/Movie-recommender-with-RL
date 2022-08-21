@@ -18,6 +18,7 @@ class NoActivation(torch.nn.Module):
 
 # message passing for edge aggregation https://github.com/pyg-team/pytorch_geometric/issues/1489
 class MultiHeadEdgeAttention(MessagePassing):
+    # GAT style attention mechanism on edge of multigraph (GATconv in pytorch geometric cannot be used here)
     def __init__(self, num_head, in_features, activation=None):
         super(MultiHeadEdgeAttention, self).__init__(aggr='add')  # "Add" aggregation.
         self.num_head = num_head

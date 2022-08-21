@@ -37,7 +37,7 @@ class IntraMetaPathAggregator(torch.nn.Module):
         # metapath aggregation
         if self.aggregator_type == 'mean':
             agg_feat = torch.mean(metapath_feat, dim=1)  # (n_edge, hidden_size)
-            agg_feat = torch.concat([metapath_feat] * self.num_head, dim=-1)  # (n_edge, hidden_size * num_head)
+            agg_feat = torch.concat([agg_feat] * self.num_head, dim=-1)  # (n_edge, hidden_size * num_head)
 
         elif self.aggregator_type == 'GRU':
             _, agg_feat = self.aggregator(input=metapath_feat)  # (1, n_edge, hidden_size * num_head)
