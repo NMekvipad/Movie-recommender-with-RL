@@ -1,0 +1,9 @@
+Code from original paper do a single pass on small graph, but my graph is so large so the whole graph cannot be passed through the network in one go.
+
+This means I cannot reuse that the way trainig loop is constructed used in original paper (single pass for whole graph for each layer), and I need to do data sampling.
+
+However, given MAGNN architecture that I want to try, normal sampling technique available in PyTorch Geometric library won't work on metapath graph that original paper use as 
+the sampling technique won't take into account nodes on metapath edges.
+
+Thus, it means that sampling need to be done at Hetero graph level or at metapath graph level but implement sampling in such a way that it takes nodes on metapath edges into account. 
+

@@ -2,6 +2,8 @@ import torch
 import numpy as np
 import pandas as pd
 import networkx as nx
+from numpy.random import MT19937
+from numpy.random import RandomState, SeedSequence
 from collections import defaultdict
 from scipy.sparse import csr_matrix
 
@@ -186,4 +188,37 @@ def extract_metapath(metapath, edge_pairs, node_type_map):
     return edge_index_updated, metapath_indices
 
 
+def sample_nodes(sampling_nodes, sample_size, batch_size=1, replace=True, p=None, seed=0):
+    random_state = RandomState(MT19937(SeedSequence(seed)))
+
+    if replace:
+        last_batch_idx = sample_size // batch_size
+        last_batch_size = sample_size % batch_size
+        num_batch = last_batch_idx + (0 if last_batch_size == 0 else 1)
+
+        for i in range(num_batch):
+            yield random_state.choice(sampling_nodes, size=batch_size, replace=True, p=p)
+
+    else:
+        sampled_nodes = list()
+
+        while True:
+            filter_bool = np.invert(np.isin(sampling_nodes, sampled_nodes))
+            sampling_nodes = sampling_nodes[filter_bool]
+            if p is not None:
+                p = p[filter_bool]
+                p = p/p.sum()  # re-normalize probability after filtering
+
+            if sampling_nodes.shape[0] == 0:
+                break
+            elif sampling_nodes.shape[0] < batch_size:
+                samples = sampling_nodes
+                sampled_nodes.extend(samples.tolist())
+                yield samples
+            else:
+                samples = random_state.choice(sampling_nodes, size=batch_size, replace=False, p=p)
+                sampled_nodes.extend(samples.tolist())
+                yield samples
+
 #TODO: Add function to convert graph to bi-directional graph
+#TODO: Check out sampling method https://pytorch-geometric.readthedocs.io/en/latest/_modules/torch_geometric/loader/neighbor_sampler.html
