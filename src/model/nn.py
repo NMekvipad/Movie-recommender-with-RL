@@ -56,7 +56,7 @@ class IntraMetaPathAggregator(torch.nn.Module):
 class InterMetaPathAggregator(torch.nn.Module):
     def __init__(
             self, hidden_size, metapath_map, num_head=1,
-            intrapath_aggregator='mean', activation=None
+            intrapath_aggregator='mean', activation=None, agg_in_batch_only=True
     ):
         """
         :metapath_list: list metapath by node type
@@ -75,6 +75,7 @@ class InterMetaPathAggregator(torch.nn.Module):
         self.hidden_size = hidden_size
         self.num_head = num_head
         self.activation_type = activation
+        self.agg_in_batch_only = agg_in_batch_only
 
         # layers
         self.intra_metapath_aggregator = defaultdict(dict)
@@ -105,42 +106,60 @@ class InterMetaPathAggregator(torch.nn.Module):
                     in_features=self.hidden_size * self.num_head, out_features=self.hidden_size, bias=True
             )
 
-    def forward(self, node_features, meta_graphs_by_n_type):
+    def forward(self, node_features, metapath_graph, node_type_map, batch_node_ids=None):
         """
         :meta_graphs_by_n_type: list of tuples where each tuple contains information about metapath graphs for each node type
         These information are edge indices, metapath indices and node type mask
             {
                 # for each node type
-                'node_type': ({
+                'node_type': {
                     (metapath 1): (edge_idx_metapath_1, metapath_idx_1),
                     (metapath 2): (edge_idx_metapath_2, metapath_idx_2)
-                }, node_type_mask)
+                }
             }
         :node_features: Tensor of shape (no. of node, node feature dimension)
+        :node_type_map: {'node_type': node_type_mask}
+
+        :outputs: Include features of all nodes if self.agg_in_batch_only is False,
+        else includes only nodes in batch_node_ids
         """
+        node_ids = np.arange(node_features.shape[0])
         outputs = dict()
-        for node_type, graph_data in meta_graphs_by_n_type.items():
-            metapath_dict, node_type_mask = graph_data
+        for node_type, intra_node_graphs in metapath_graph.items():
+            node_type_mask = node_type_map[node_type]
             intra_path_agg_node = list()
             e_p = list()
 
             # intra-metapath message passing
-            for metapath, metapath_data in metapath_dict.items():
+            for metapath, intra_metapath_graph in intra_node_graphs.items():
                 metapath_node_feat = self.intra_metapath_aggregator[node_type][metapath](
                     node_features=node_features,
-                    edge_index=metapath_data[0],
-                    metapath_idx=metapath_data[1]
+                    edge_index=intra_metapath_graph[0],
+                    metapath_idx=intra_metapath_graph[1]
                 )
 
-                h_p = metapath_node_feat[np.where(node_type_mask == node_type)]
+                if self.agg_in_batch_only:
+                    if batch_node_ids is None:
+                        raise ValueError("If agg_in_batch_only is True, then n_subset must be provided")
+
+                    h_p = metapath_node_feat[
+                        np.where(
+                            np.logical_and(
+                                node_type_mask == node_type, np.isin(node_ids, batch_node_ids)
+                            )
+                        )
+                    ]
+                else:
+                    h_p = metapath_node_feat[np.where(node_type_mask == node_type)]
+
                 s_p = self.tanh(self.path_summarizer[node_type][metapath](h_p)).mean(dim=0)
 
                 intra_path_agg_node.append(h_p.unsqueeze(dim=1))
                 e_p.append(self.path_attn[node_type][metapath](s_p))
 
             # inter_metapath_aggregation
-            beta = F.softmax(torch.concat(e_p, dim=0), dim=0).unsqueeze(dim=-1)
             h_p = torch.concat(intra_path_agg_node, dim=1)
+            beta = F.softmax(torch.concat(e_p, dim=0), dim=0).unsqueeze(dim=-1)
             h_p_a = (h_p * beta).sum(dim=1)
             h_v = self.output_activation(self.output_linear[node_type](h_p_a))
             outputs[node_type] = h_v
