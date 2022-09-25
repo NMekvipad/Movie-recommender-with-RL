@@ -152,7 +152,7 @@ class MAGNN(torch.nn.Module):
     def __init__(self, hidden_dim):
         super().__init__()
 
-    def forward(self):
+    def forward(self, metapath_graph):
         # map node feature to the same dimension
 
         #####################################

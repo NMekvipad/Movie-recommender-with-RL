@@ -319,7 +319,36 @@ class MetapathGraphData(Dataset):
         source_nodes = [node_id]
         sample = self.__get_subgraph_by_destination_nodes(source_nodes)
 
-        return sample
+        return sample, node_id
+
+
+def metapath_collate_fn(batch):
+    metapath_subgraph = defaultdict(dict)
+    node_ids = list()
+
+    for node_type, metapaths in batch[0][0].items():
+        for metapath in metapaths.keys():
+            metapath_subgraph[node_type][metapath] = (list(), list())
+
+    for sample, node_id in batch:
+        node_ids.append(node_id)
+        for node_type, metapaths in sample.items():
+            for metapath, (edges_subset, paths_subset) in metapaths.items():
+                metapath_subgraph[node_type][metapath][0].append(edges_subset)
+                metapath_subgraph[node_type][metapath][1].append(paths_subset)
+
+    for node_type, metapaths in metapath_subgraph.items():
+        for metapath in metapaths.keys():
+            metapath_edges, metapath_members = metapath_subgraph[node_type][metapath]
+            metapath_edges = np.concatenate(metapath_edges, axis=0)
+            metapath_members = np.concatenate(metapath_members, axis=0)
+
+            metapath_edges, filtering_index = np.unique(metapath_edges, axis=0, return_index=True)
+            metapath_members = metapath_members[filtering_index]
+
+            metapath_subgraph[node_type][metapath] = (metapath_edges, metapath_members)
+
+    return metapath_subgraph, node_ids
 
 
 def get_metapath_graph_size(metapath_graph):
