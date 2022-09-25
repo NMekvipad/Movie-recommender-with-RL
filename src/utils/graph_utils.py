@@ -6,6 +6,7 @@ from numpy.random import MT19937
 from numpy.random import RandomState, SeedSequence
 from collections import defaultdict
 from scipy.sparse import csr_matrix
+from torch.utils.data import Dataset
 
 
 def edge_pairs_to_adjacency(edge_pairs):
@@ -220,5 +221,76 @@ def sample_nodes(sampling_nodes, sample_size, batch_size=1, replace=True, p=None
                 sampled_nodes.extend(samples.tolist())
                 yield samples
 
-#TODO: Add function to convert graph to bi-directional graph
-#TODO: Check out sampling method https://pytorch-geometric.readthedocs.io/en/latest/_modules/torch_geometric/loader/neighbor_sampler.html
+
+# create customer data set as PyGeo cannot handle sampling at metapath level
+class MetapathGraphData(Dataset):
+    def __init__(self, metapath_graph, samples_nodes, depth, seed=0):  #, num_neighbors=None
+        self.idx_to_node_map = {idx: node for idx, node in enumerate(samples_nodes)}
+        self.metapath_graph = metapath_graph
+        self.depth = depth
+        self.random_state = RandomState(MT19937(SeedSequence(seed)))
+
+        #TODO: implement filtering by num neighbors
+        #if num_neighbors is None:
+        #    self.num_neighbors = [None] * self.depth
+        #elif len(num_neighbors) == depth:
+        #    self.num_neighbors = num_neighbors
+        #else:
+        #    ValueError('num_neighbors should be a list like structure with length equal to sampling depth')
+
+        # convert to array
+        for node_type, metapaths in self.metapath_graph.items():
+            for metapath in metapaths.keys():
+                metapath_edges, metapath_members = self.metapath_graph[node_type][metapath]
+                metapath_edges = np.array([list(i) for i in metapath_edges])
+                metapath_members = np.array(metapath_members)
+                self.metapath_graph[node_type][metapath] = (metapath_edges, metapath_members)
+
+    def __get_nodes_on_metapath__(self, metapath_graph):
+        nodes = set()
+        for metapaths in metapath_graph.values():
+            for metapath_edges, metapath_members in metapaths.values():
+                new_nodes = list(np.unique(metapath_edges)) + list(np.unique(metapath_members))
+                nodes = nodes.union(new_nodes)
+
+        return list(nodes)
+
+    def __get_subgraph_by_destination_nodes__(self, node_ids):
+        metapath_subgraph = defaultdict(dict)
+
+        for node_type, metapaths in self.metapath_graph.items():
+            for metapath in metapaths.keys():
+                metapath_edges, metapath_members = self.metapath_graph[node_type][metapath]
+                filtering_args = np.argwhere(np.isin(metapath_edges[:, 1], node_ids)).ravel()
+
+                metapath_subgraph[node_type][metapath] = (
+                    metapath_edges[filtering_args], metapath_members[filtering_args]
+                )
+
+        return metapath_subgraph
+
+    def __len__(self):
+        return len(self.idx_node_map)
+
+    def __getitem__(self, idx):
+        node_id = self.idx_to_node_map.get(idx)
+        sample = None
+        source_nodes = [node_id]
+
+        for i in range(self.depth):
+            sample = self.__get_subgraph_by_destination_nodes__(source_nodes)
+            source_nodes = self.__get_nodes_on_metapath__(sample)
+
+        return sample
+
+
+def get_metapath_graph_size(metapath_graph):
+    size = 0
+    for node_type, metapaths in metapath_graph.items():
+        for metapath, value in metapaths.items():
+            size += value[0].shape[0]
+
+    return size
+
+# TODO: Add function to convert graph to bi-directional graph
+# TODO: Check out sampling method https://pytorch-geometric.readthedocs.io/en/latest/_modules/torch_geometric/loader/neighbor_sampler.html
