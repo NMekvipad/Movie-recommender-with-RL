@@ -246,7 +246,7 @@ class MetapathGraphData(Dataset):
                 metapath_members = np.array(metapath_members)
                 self.metapath_graph[node_type][metapath] = (metapath_edges, metapath_members)
 
-    def __get_nodes_on_metapath__(self, metapath_graph):
+    def __get_nodes_on_metapath(self, metapath_graph):
         nodes = set()
         for metapaths in metapath_graph.values():
             for metapath_edges, metapath_members in metapaths.values():
@@ -255,7 +255,7 @@ class MetapathGraphData(Dataset):
 
         return list(nodes)
 
-    def __get_subgraph_by_destination_nodes__(self, node_ids):
+    def __get_subgraph_by_destination_nodes(self, node_ids):
         metapath_subgraph = defaultdict(dict)
 
         for node_type, metapaths in self.metapath_graph.items():
@@ -278,8 +278,8 @@ class MetapathGraphData(Dataset):
         source_nodes = [node_id]
 
         for i in range(self.depth):
-            sample = self.__get_subgraph_by_destination_nodes__(source_nodes)
-            source_nodes = self.__get_nodes_on_metapath__(sample)
+            sample = self.__get_subgraph_by_destination_nodes(source_nodes)
+            source_nodes = self.__get_nodes_on_metapath(sample)
 
         return sample
 
