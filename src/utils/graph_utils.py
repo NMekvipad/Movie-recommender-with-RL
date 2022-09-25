@@ -224,11 +224,13 @@ def sample_nodes(sampling_nodes, sample_size, batch_size=1, replace=True, p=None
 
 # create customer data set as PyGeo cannot handle sampling at metapath level
 class MetapathGraphData(Dataset):
-    def __init__(self, metapath_graph, samples_nodes, depth, seed=0):  #, num_neighbors=None
+    def __init__(self, metapath_graph, samples_nodes, depth, seed=0, num_neighbors=None, num_metapath_branches=None):
         self.idx_to_node_map = {idx: node for idx, node in enumerate(samples_nodes)}
         self.metapath_graph = metapath_graph
         self.depth = depth
         self.random_state = RandomState(MT19937(SeedSequence(seed)))
+        self.num_neighbors = num_neighbors
+        self.num_metapath_branches = num_metapath_branches
 
         #TODO: implement filtering by num neighbors
         #if num_neighbors is None:
@@ -255,16 +257,56 @@ class MetapathGraphData(Dataset):
 
         return list(nodes)
 
+    def __sample_nodes(self, a, sample_size, upper_limit):
+        if sample_size > upper_limit:
+            sample_size = upper_limit
+
+        return self.random_state.choice(a, size=sample_size, replace=False)
+
     def __get_subgraph_by_destination_nodes(self, node_ids):
         metapath_subgraph = defaultdict(dict)
+        prev_destination = None
+        curr_destination = node_ids
 
         for node_type, metapaths in self.metapath_graph.items():
             for metapath in metapaths.keys():
-                metapath_edges, metapath_members = self.metapath_graph[node_type][metapath]
-                filtering_args = np.argwhere(np.isin(metapath_edges[:, 1], node_ids)).ravel()
+                metapath_subgraph[node_type][metapath] = (list(), list())
 
+        for i in range(self.depth):
+            source_nodes = list()
+            for node_type, metapaths in self.metapath_graph.items():
+                for metapath in metapaths.keys():
+                    metapath_edges, metapath_members = self.metapath_graph[node_type][metapath]
+                    filtering_args = np.argwhere(np.isin(metapath_edges[:, 1], curr_destination)).ravel()
+
+                    if self.num_neighbors is not None and filtering_args.shape[0] != 0:
+                        filtering_args = self.__sample_nodes(filtering_args, self.num_neighbors, filtering_args.shape[0])
+
+                    edges_subset = metapath_edges[filtering_args]
+                    paths_subset = metapath_members[filtering_args]
+
+                    if self.num_metapath_branches is not None:
+                        new_sources = edges_subset[:, 0].tolist() \
+                            + self.__sample_nodes(
+                                np.unique(paths_subset), self.num_metapath_branches, np.unique(paths_subset).shape[0]
+                            ).tolist()
+                    else:
+                        new_sources = edges_subset[:, 0].tolist() + np.unique(paths_subset).tolist()
+
+                    source_nodes.extend(list(set(new_sources)))
+
+                    metapath_subgraph[node_type][metapath][0].append(edges_subset)
+                    metapath_subgraph[node_type][metapath][1].append(paths_subset)
+
+            prev_destination = curr_destination
+            # avoid bi-directional loop, self loop or any loop in general
+            curr_destination = list(set(source_nodes) - set(prev_destination))
+
+        for node_type, metapaths in self.metapath_graph.items():
+            for metapath in metapaths.keys():
+                metapath_edges, metapath_members = metapath_subgraph[node_type][metapath]
                 metapath_subgraph[node_type][metapath] = (
-                    metapath_edges[filtering_args], metapath_members[filtering_args]
+                    np.concatenate(metapath_edges, axis=0), np.concatenate(metapath_members, axis=0)
                 )
 
         return metapath_subgraph
@@ -274,12 +316,8 @@ class MetapathGraphData(Dataset):
 
     def __getitem__(self, idx):
         node_id = self.idx_to_node_map.get(idx)
-        sample = None
         source_nodes = [node_id]
-
-        for i in range(self.depth):
-            sample = self.__get_subgraph_by_destination_nodes(source_nodes)
-            source_nodes = self.__get_nodes_on_metapath(sample)
+        sample = self.__get_subgraph_by_destination_nodes(source_nodes)
 
         return sample
 
